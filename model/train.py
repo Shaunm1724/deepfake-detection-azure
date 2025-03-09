@@ -13,7 +13,14 @@ import numpy as np
 from tqdm import tqdm
 import logging
 import matplotlib.pyplot as plt
-from dataset_preprocessing import VideoFrameDataset
+
+
+import sys
+import os
+
+sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+
+from data_preprocessing import VideoFrameDataset
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
