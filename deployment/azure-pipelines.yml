@@ -1,0 +1,121 @@
+trigger:
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - model/**
+    - api/**
+    - deployment/**
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  # Azure Resources
+  resourceGroup: 'DeepfakeDetectionRG'
+  location: 'eastus'
+  acrName: 'deepfakeregistry'
+  aksClusterName: 'DeepfakeCluster'
+  functionAppName: 'deepfake-functions'
+  # Container settings
+  appName: 'deepfake-detector'
+  modelVersion: '$(Build.BuildId)'
+  namespace: 'deepfake-detection'
+  # Build configuration
+  pythonVersion: '3.9'
+
+stages:
+- stage: Build
+  displayName: 'Build and Publish'
+  jobs:
+  - job: BuildAndPublish
+    displayName: 'Build and publish API image'
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(pythonVersion)'
+        addToPath: true
+      displayName: 'Use Python $(pythonVersion)'
+
+    - script: |
+        python -m pip install --upgrade pip
+        pip install -r model/requirements.txt
+      displayName: 'Install model dependencies'
+
+    - script: |
+        python -m pip install pytest pytest-azurepipelines pytest-cov
+        python -m pytest model/tests/ --cov=model --cov-report=xml
+      displayName: 'Run unit tests'
+      
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: 'Azure Subscription'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Login to ACR
+          az acr login --name $(acrName)
+          
+          # Build and push Docker image to ACR
+          az acr build --registry $(acrName) --image $(appName):$(modelVersion) api/
+      displayName: 'Build and push to ACR'
+
+- stage: Deploy
+  displayName: 'Deploy to AKS'
+  dependsOn: Build
+  jobs:
+  - job: DeployToAKS
+    displayName: 'Deploy to AKS'
+    steps:
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: 'Azure Subscription'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Get AKS credentials
+          az aks get-credentials --resource-group $(resourceGroup) --name $(aksClusterName) --admin
+          
+          # Get ACR login server
+          ACR_LOGIN_SERVER=$(az acr show --name $(acrName) --resource-group $(resourceGroup) --query loginServer --output tsv)
+          
+          # Update deployment image
+          kubectl set image deployment/$(appName) $(appName)=${ACR_LOGIN_SERVER}/$(appName):$(modelVersion) --namespace $(namespace)
+          
+          # Check deployment status
+          kubectl rollout status deployment/$(appName) --namespace $(namespace)
+      displayName: 'Deploy to AKS'
+
+- stage: UpdateFunctions
+  displayName: 'Update Azure Functions'
+  dependsOn: Deploy
+  jobs:
+  - job: UpdateFunctions
+    displayName: 'Update Azure Functions'
+    steps:
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: 'Azure Subscription'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Get API endpoint
+          API_IP=$(kubectl get svc $(appName) --namespace $(namespace) --template="{{range .status.loadBalancer.ingress}}{{.ip}}{{end}}")
+          API_ENDPOINT="http://${API_IP}"
+          
+          # Update Function App setting
+          az functionapp config appsettings set \
+            --name $(functionAppName) \
+            --resource-group $(resourceGroup) \
+            --settings DEEPFAKE_API_ENDPOINT="${API_ENDPOINT}"
+      displayName: 'Update Function App settings'
+      
+    - task: AzureFunctionApp@1
+      inputs:
+        azureSubscription: 'Azure Subscription'
+        appType: 'functionAppLinux'
+        appName: '$(functionAppName)'
+        package: '$(System.DefaultWorkingDirectory)/function_app'
+        runtimeStack: 'PYTHON|3.9'
+      displayName: 'Deploy to Azure Functions'
