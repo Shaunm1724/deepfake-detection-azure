@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no"> 
+    <title>Detection Result</title>
+     <style>
+        /* --- Dark Mode Variables --- */
+        :root {
+            --bg-color: #1a1a1a;
+            --text-color: #e0e0e0;
+            --container-bg: #2a2a2a;
+            --result-bg: #333333;
+            --border-color: #444;
+            --accent-color: #3498db;
+            --label-fake-color: #f87171; /* Brighter Red for dark mode */
+            --label-real-color: #4ade80; /* Brighter Green for dark mode */
+            --link-hover-color: #5dade2;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 2em;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            line-height: 1.6;
+            transition: padding 0.3s ease; /* Smooth transition for padding */
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 2em auto;
+            padding: 2em;
+            background-color: var(--container-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+             transition: padding 0.3s ease, margin 0.3s ease; /* Smooth transition */
+        }
+
+         h1 {
+            color: var(--text-color);
+            margin-bottom: 1em;
+            text-align: center;
+            font-weight: 600;
+            font-size: 2em; /* Base size */
+             transition: font-size 0.3s ease;
+        }
+
+        .result {
+            margin-top: 1em;
+            padding: 1.5em;
+            background-color: var(--result-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+             transition: padding 0.3s ease;
+        }
+
+        .result h3 {
+            margin-top: 0;
+            margin-bottom: 1em;
+            font-weight: 500;
+            color: #c0c0c0;
+            word-wrap: break-word;
+            font-size: 1.1em;
+        }
+
+        .result p {
+             margin-bottom: 1em;
+             text-align: left;
+        }
+
+        .prediction-label {
+            font-size: 1.2em; /* Slightly smaller base size */
+            padding: 0.2em 0.5em;
+            border-radius: 4px;
+            display: inline-block;
+            margin-left: 0.5em; /* Space after "Prediction:" */
+            vertical-align: middle; /* Align better with text */
+        }
+
+        .label-fake {
+            color: #1a1a1a;
+            background-color: var(--label-fake-color);
+            font-weight: bold;
+        }
+
+        .label-real {
+           color: #1a1a1a;
+           background-color: var(--label-real-color);
+           font-weight: bold;
+        }
+
+        .confidence-list {
+            list-style: none;
+            padding-left: 0;
+            margin-top: 0.5em;
+            margin-bottom: 1.5em;
+        }
+        .confidence-list li {
+            margin-bottom: 0.5em;
+            margin-left: 1em;
+             transition: margin-left 0.3s ease;
+        }
+         .confidence-list li::before {
+             content: "•";
+             color: var(--accent-color);
+             display: inline-block;
+             width: 1em;
+             margin-left: -1em;
+             transition: margin-left 0.3s ease;
+         }
+
+        .extracted-frame-container {
+            margin-top: 1.5em;
+            text-align: center;
+        }
+         .extracted-frame-container p {
+             text-align: center;
+             margin-bottom: 0.5em;
+             font-weight: 500;
+         }
+
+        .extracted-frame-container img {
+            max-width: 100%; /* Crucial for responsiveness */
+            height: auto;   /* Maintain aspect ratio */
+            border-radius: 4px;
+            border: 1px solid var(--border-color);
+            display: block; /* Prevents extra space below image */
+            margin: 0 auto; /* Center image if container is wider */
+        }
+
+        .back-link {
+            display: block;
+            text-align: center;
+            margin-top: 2em;
+            color: var(--accent-color);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s ease, margin-top 0.3s ease;
+            padding: 8px 15px; /* Make it easier to tap */
+            border-radius: 4px;
+        }
+        .back-link:hover {
+            color: var(--link-hover-color);
+            text-decoration: underline;
+            background-color: rgba(52, 152, 219, 0.1); /* Subtle hover background */
+        }
+
+
+        /* --- Responsive Adjustments --- */
+        @media (max-width: 650px) {
+             body {
+                padding: 1em; /* Less padding on small screens */
+            }
+
+            .container {
+                margin: 1em auto; /* Less vertical margin */
+                padding: 1.5em; /* Less padding inside container */
+                max-width: 95%; /* Allow container to be wider relative to screen */
+            }
+
+            h1 {
+                font-size: 1.6em; /* Smaller heading */
+            }
+
+             .result {
+                 padding: 1em; /* Less padding inside result box */
+             }
+
+             .result h3 {
+                font-size: 1em;
+             }
+
+             .result p {
+                 font-size: 0.95em;
+             }
+
+            .prediction-label {
+                font-size: 1.1em;
+                margin-left: 0.3em;
+            }
+
+            .confidence-list li {
+                margin-left: 0.5em; /* Less indent */
+            }
+            .confidence-list li::before {
+                 margin-left: -0.5em; /* Adjust bullet */
+            }
+
+            .back-link {
+                 margin-top: 1.5em;
+             }
+        }
+
+         @media (max-width: 400px) {
+             h1 {
+                 font-size: 1.4em;
+             }
+             .container {
+                 padding: 1em;
+             }
+              .result p {
+                 font-size: 0.9em;
+             }
+             .prediction-label {
+                display: block; /* Stack label below text */
+                margin-left: 0;
+                margin-top: 0.3em;
+                text-align: center;
+             }
+         }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Detection Result</h1>
+
+        <div class="result">
+            <h3>Video File: {{ filename }}</h3>
+
+            <p>Prediction from extracted frame:
+                <span class="prediction-label {% if prediction == 'fake' %}label-fake{% else %}label-real{% endif %}">
+                    {{ prediction.upper() }}
+                </span>
+            </p>
+
+            <p>Confidence Scores:</p>
+            <ul class="confidence-list">
+                <li>Fake: {{ "%.2f"|format(confidence_fake * 100) }}%</li>
+                <li>Real: {{ "%.2f"|format(confidence_real * 100) }}%</li>
+            </ul>
+
+             {% if extracted_frame_path %}
+             <div class="extracted-frame-container">
+                 <p>Extracted Frame:</p>
+                 <img src="{{ url_for('static', filename='temp_frames/' + extracted_frame_path) }}" alt="Extracted Frame">
+            </div>
+             {% endif %}
+        </div>
+
+        <a href="{{ url_for('index') }}" class="back-link">Analyze another video</a>
+    </div>
+</body>
+</html>

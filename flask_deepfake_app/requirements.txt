@@ -1,0 +1,6 @@
+Flask
+torch
+torchvision
+opencv-python-headless  
+Pillow
+Werkzeug              

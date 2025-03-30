@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no"> 
+    <title>Deepfake Video Detector</title>
+    <style>
+        /* --- Dark Mode Variables --- */
+        :root {
+            --bg-color: #1a1a1a;
+            --text-color: #e0e0e0;
+            --container-bg: #2a2a2a;
+            --border-color: #444;
+            --accent-color: #3498db;
+            --button-bg: #3498db;
+            --button-text: #ffffff;
+            --button-hover-bg: #2980b9;
+            --error-color: #e74c3c;
+            --input-bg: #333;
+            --input-border: #555;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 2em;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            line-height: 1.6;
+            transition: padding 0.3s ease; /* Smooth transition for padding */
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 2em auto;
+            padding: 2em;
+            background-color: var(--container-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+            transition: padding 0.3s ease, margin 0.3s ease; /* Smooth transition */
+        }
+
+        h1 {
+            color: var(--text-color);
+            margin-bottom: 0.5em;
+            text-align: center;
+            font-weight: 600;
+            font-size: 2em; /* Base size */
+            transition: font-size 0.3s ease;
+        }
+
+        p {
+            margin-bottom: 1.5em;
+            color: #b0b0b0;
+             text-align: center;
+        }
+
+        form {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1.5em;
+            transition: gap 0.3s ease;
+        }
+
+        input[type="file"] {
+            border: 1px solid var(--input-border);
+            background-color: var(--input-bg);
+            color: var(--text-color);
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 90%;
+            max-width: 400px; /* Limit width on larger screens */
+            box-sizing: border-box;
+            text-align: left; /* Align text to left */
+            transition: width 0.3s ease, padding 0.3s ease;
+        }
+
+        input[type="file"]::file-selector-button {
+          background-color: var(--accent-color);
+          color: var(--button-text);
+          border: none;
+          padding: 8px 12px;
+          border-radius: 4px;
+          cursor: pointer;
+          margin-right: 10px;
+          transition: background-color 0.2s ease;
+        }
+        input[type="file"]::file-selector-button:hover {
+            background-color: var(--button-hover-bg);
+        }
+
+
+        button[type="submit"] {
+            background-color: var(--button-bg);
+            color: var(--button-text);
+            border: none;
+            padding: 12px 25px;
+            border-radius: 5px;
+            font-size: 1em;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s ease, transform 0.1s ease, width 0.3s ease;
+            width: auto;
+            min-width: 150px; /* Ensure button has reasonable minimum width */
+        }
+
+        button[type="submit"]:hover {
+            background-color: var(--button-hover-bg);
+            transform: translateY(-1px);
+        }
+         button[type="submit"]:active {
+            transform: translateY(0px);
+        }
+
+
+        .loader {
+            border: 5px solid #444;
+            border-top: 5px solid var(--accent-color);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 2em auto 0;
+            display: none;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            color: var(--error-color);
+            background-color: rgba(231, 76, 60, 0.1);
+            border: 1px solid var(--error-color);
+            padding: 1em;
+            border-radius: 5px;
+            margin-top: 1.5em;
+            text-align: center;
+            font-weight: 500;
+            width: 90%; /* Match input width */
+            max-width: 400px; /* Limit width */
+            box-sizing: border-box; /* Include padding in width */
+        }
+         .error strong {
+            font-weight: 700;
+         }
+
+        /* --- Responsive Adjustments --- */
+        @media (max-width: 650px) {
+            body {
+                padding: 1em; /* Less padding on small screens */
+            }
+
+            .container {
+                margin: 1em auto; /* Less vertical margin */
+                padding: 1.5em; /* Less padding inside container */
+                max-width: 95%; /* Allow container to be wider relative to screen */
+            }
+
+            h1 {
+                font-size: 1.6em; /* Smaller heading */
+            }
+
+            p {
+                font-size: 0.95em; /* Slightly smaller text */
+                margin-bottom: 1.2em;
+            }
+
+            form {
+                gap: 1em; /* Less space between form elements */
+            }
+
+            input[type="file"],
+            button[type="submit"],
+            .error {
+                 width: 100%; /* Make form elements and error full width */
+                 max-width: none; /* Remove max-width limit on small screens */
+            }
+
+             input[type="file"] {
+                 padding: 8px 12px; /* Adjust padding */
+                 text-align: center; /* Center placeholder text on small screens */
+             }
+              input[type="file"]::file-selector-button {
+                  padding: 6px 10px; /* Slightly smaller button */
+              }
+
+             button[type="submit"] {
+                 padding: 10px 20px; /* Adjust padding */
+             }
+
+            .loader {
+                margin-top: 1.5em;
+            }
+        }
+
+         @media (max-width: 400px) {
+             h1 {
+                 font-size: 1.4em;
+             }
+             p {
+                 font-size: 0.9em;
+             }
+             .container {
+                 padding: 1em;
+             }
+         }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Deepfake Video Detector</h1>
+        <p>Upload a short video file (mp4, avi, mov, etc.). A frame will be extracted and analyzed using AI.</p>
+
+        <form method="post" enctype="multipart/form-data" action="{{ url_for('predict') }}" onsubmit="showLoader()">
+            <input type="file" name="video" accept="video/*" required>
+            <button type="submit">Analyze Video</button>
+        </form>
+
+        <div id="loader" class="loader"></div> <!-- Loader element -->
+
+        {% if error %}
+            <div class="error"><strong>Error:</strong> {{ error }}</div>
+        {% endif %}
+    </div>
+
+    <script>
+        function showLoader() {
+            const errorDiv = document.querySelector('.error');
+            if (errorDiv) {
+                errorDiv.style.display = 'none';
+            }
+            document.getElementById('loader').style.display = 'block';
+        }
+    </script>
+</body>
+</html>
