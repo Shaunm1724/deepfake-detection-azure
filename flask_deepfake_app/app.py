@@ -23,7 +23,6 @@ DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['STATIC_FOLDER'] = STATIC_FOLDER
-app.config['SECRET_KEY'] = 'your_very_secret_key' # Change for production!
 # Ensure upload and static frame directories exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(TEMP_FRAME_FOLDER, exist_ok=True)
@@ -226,4 +225,4 @@ def predict():
 # --- Run the App ---
 if __name__ == '__main__':
     # Set debug=False for production
-    app.run(debug=True, host='0.0.0.0', port=5000) # Host 0.0.0.0 makes it accessible on network
+    app.run(debug=False, host='0.0.0.0', port=5000) # Host 0.0.0.0 makes it accessible on network
