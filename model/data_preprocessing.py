@@ -1,238 +1,185 @@
-import os
 import cv2
-import random
-import numpy as np
-import torch
-from torch.utils.data import Dataset
+import os
+import argparse
 from tqdm import tqdm
-import logging
-from pathlib import Path
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-class VideoFrameDataset(Dataset):
+def extract_frame(video_path, output_folder, frame_choice='middle', output_format='jpg'):
     """
-    Dataset class for loading frames from videos for deepfake detection.
-    
+    Extracts a single frame from a video file and saves it as an image.
+
     Args:
-        root_dir (str): Directory containing the videos
-        num_frames (int): Number of frames to sample from each video
-        transform (callable, optional): Optional transform to be applied on a sample
+        video_path (str): Path to the input video file.
+        output_folder (str): Path to the folder where the extracted frame will be saved.
+        frame_choice (str or int):
+            - 'middle': Extract the middle frame.
+            - 'first': Extract the very first frame (index 0).
+            - int: Extract the frame at this specific index.
+        output_format (str): Image format to save (e.g., 'jpg', 'png').
+
+    Returns:
+        bool: True if extraction was successful, False otherwise.
     """
-    def __init__(self, root_dir, num_frames=16, transform=None):
-        self.root_dir = root_dir
-        self.num_frames = num_frames
-        self.transform = transform
-        
-        # Find all video files
-        self.video_paths = []
-        self.labels = []
-        
-        # Look for real and fake videos
-        real_dir = os.path.join(root_dir, 'real')
-        fake_dir = os.path.join(root_dir, 'fake')
-        
-        # Check if the directories exist
-        if not os.path.exists(real_dir) or not os.path.exists(fake_dir):
-            raise FileNotFoundError(f"Expected directories 'real' and 'fake' under {root_dir}")
-        
-        # Get real videos (label 0)
-        for video_file in os.listdir(real_dir):
-            if video_file.endswith(('.mp4', '.avi', '.mov')):
-                self.video_paths.append(os.path.join(real_dir, video_file))
-                self.labels.append(0)  # Real videos are labeled as 0
-        
-        # Get fake videos (label 1)
-        for video_file in os.listdir(fake_dir):
-            if video_file.endswith(('.mp4', '.avi', '.mov')):
-                self.video_paths.append(os.path.join(fake_dir, video_file))
-                self.labels.append(1)  # Fake videos are labeled as 1
-        
-        logging.info(f"Found {len(self.video_paths)} videos ({self.labels.count(0)} real, {self.labels.count(1)} fake)")
-    
-    def __len__(self):
-        return len(self.video_paths)
-    
-    def __getitem__(self, idx):
-        """
-        Get frames from a video and its label
-        """
-        video_path = self.video_paths[idx]
-        label = self.labels[idx]
-        
-        # Extract frames from the video
-        frames = self.extract_frames(video_path)
-        
-        # Convert to torch tensor
-        frames_tensor = torch.stack(frames)
-        
-        return frames_tensor, torch.tensor(label, dtype=torch.long)
-    
-    def extract_frames(self, video_path):
-        """
-        Extract frames from a video
-        """
+    try:
+        # Open the video file
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            raise ValueError(f"Failed to open video file: {video_path}")
-        
-        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        
-        # If video has fewer frames than required, we'll duplicate some frames
-        if frame_count <= self.num_frames:
-            # Read all available frames
-            frames = []
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                
-                if self.transform:
-                    frame = self.transform(frame)
-                
-                frames.append(frame)
-            
-            # Duplicate frames to reach required count
-            while len(frames) < self.num_frames:
-                frames.append(frames[len(frames) % len(frames)])
+            print(f"Error: Could not open video file: {video_path}")
+            return False
+
+        # Get video properties
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        # fps = cap.get(cv2.CAP_PROP_FPS) # Uncomment if needed
+
+        if total_frames <= 0:
+            print(f"Warning: Video file has no frames or is invalid: {video_path}")
+            cap.release()
+            return False
+
+        # Determine the frame index to extract
+        frame_index = -1
+        if frame_choice == 'middle':
+            frame_index = total_frames // 2
+        elif frame_choice == 'first':
+            frame_index = 0
+        elif isinstance(frame_choice, int):
+            if 0 <= frame_choice < total_frames:
+                frame_index = frame_choice
+            else:
+                print(f"Error: Frame index {frame_choice} out of bounds "
+                      f"(0-{total_frames - 1}) for video: {video_path}")
+                cap.release()
+                return False
         else:
-            # Sample frames uniformly from the video
-            frames_to_sample = sorted(random.sample(range(frame_count), self.num_frames))
-            frames = []
-            
-            for frame_idx in frames_to_sample:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-                ret, frame = cap.read()
-                if not ret:
-                    raise ValueError(f"Failed to read frame {frame_idx} from {video_path}")
-                
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                
-                if self.transform:
-                    frame = self.transform(frame)
-                
-                frames.append(frame)
-        
-        cap.release()
-        return frames
+             print(f"Error: Invalid frame_choice '{frame_choice}' for video: {video_path}")
+             cap.release()
+             return False
 
-def preprocess_video_dataset(input_dir, output_dir, num_frames=16):
-    """
-    Preprocess a video dataset by extracting frames from videos.
-    
-    Args:
-        input_dir (str): Directory containing 'real' and 'fake' subdirectories with videos
-        output_dir (str): Output directory to save extracted frames
-        num_frames (int): Number of frames to extract from each video
-    """
-    # Create output directories
-    os.makedirs(os.path.join(output_dir, 'real'), exist_ok=True)
-    os.makedirs(os.path.join(output_dir, 'fake'), exist_ok=True)
-    
-    # Process real videos
-    real_dir = os.path.join(input_dir, 'real')
-    for video_file in tqdm(os.listdir(real_dir), desc="Processing real videos"):
-        if video_file.endswith(('.mp4', '.avi', '.mov')):
-            video_path = os.path.join(real_dir, video_file)
-            output_path = os.path.join(output_dir, 'real', os.path.splitext(video_file)[0])
-            os.makedirs(output_path, exist_ok=True)
-            
-            extract_and_save_frames(video_path, output_path, num_frames)
-    
-    # Process fake videos
-    fake_dir = os.path.join(input_dir, 'fake')
-    for video_file in tqdm(os.listdir(fake_dir), desc="Processing fake videos"):
-        if video_file.endswith(('.mp4', '.avi', '.mov')):
-            video_path = os.path.join(fake_dir, video_file)
-            output_path = os.path.join(output_dir, 'fake', os.path.splitext(video_file)[0])
-            os.makedirs(output_path, exist_ok=True)
-            
-            extract_and_save_frames(video_path, output_path, num_frames)
+        # Set the video position to the desired frame
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
 
-def extract_and_save_frames(video_path, output_path, num_frames):
-    """
-    Extract frames from a video and save them
-    """
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        logging.error(f"Failed to open video file: {video_path}")
-        return
-    
-    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-    if frame_count <= num_frames:
-        # Extract all frames
-        frame_indices = range(frame_count)
-    else:
-        # Sample frames uniformly
-        frame_indices = np.linspace(0, frame_count - 1, num_frames, dtype=int)
-    
-    for i, frame_idx in enumerate(frame_indices):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        # Read the frame
         ret, frame = cap.read()
-        if not ret:
-            logging.warning(f"Failed to read frame {frame_idx} from {video_path}")
-            continue
-        
-        # Save the frame
-        frame_path = os.path.join(output_path, f'frame_{i:03d}.jpg')
-        cv2.imwrite(frame_path, frame)
-    
-    cap.release()
 
-def prepare_dataset_for_azure(dataset_dir, output_blob_container):
+        if not ret or frame is None:
+            print(f"Error: Could not read frame {frame_index} from video: {video_path}")
+            cap.release()
+            return False
+
+        # Construct output filename
+        base_filename = os.path.splitext(os.path.basename(video_path))[0]
+        output_filename = f"{base_filename}.{output_format}"
+        output_path = os.path.join(output_folder, output_filename)
+
+        # Ensure output directory exists
+        os.makedirs(output_folder, exist_ok=True)
+
+        # Save the frame
+        cv2.imwrite(output_path, frame)
+        # print(f"Saved frame {frame_index} from {video_path} to {output_path}") # Verbose output
+
+        # Release the video capture object
+        cap.release()
+        return True
+
+    except Exception as e:
+        print(f"An unexpected error occurred processing {video_path}: {e}")
+        if 'cap' in locals() and cap.isOpened():
+            cap.release()
+        return False
+
+def process_video_dataset(video_root_dir, image_output_dir, frame_choice='middle'):
     """
-    Prepare dataset metadata for uploading to Azure Blob Storage
-    
+    Processes all videos in a structured dataset directory, extracting one frame per video.
+
     Args:
-        dataset_dir (str): Directory containing preprocessed dataset
-        output_blob_container (str): Name of the Azure Blob Storage container
-    
-    Returns:
-        dict: Dictionary with dataset metadata
+        video_root_dir (str): Path to the root directory of the video dataset
+                              (containing subfolders like 'real', 'fake', 'train', 'validation').
+        image_output_dir (str): Path to the root directory where the output image dataset
+                                will be created.
+        frame_choice (str or int): Frame selection strategy passed to extract_frame.
     """
-    metadata = {
-        'real_videos': [],
-        'fake_videos': []
-    }
-    
-    # Process real videos
-    real_dir = os.path.join(dataset_dir, 'real')
-    for video_dir in os.listdir(real_dir):
-        video_path = os.path.join(real_dir, video_dir)
-        if os.path.isdir(video_path):
-            frames = [f for f in os.listdir(video_path) if f.endswith('.jpg')]
-            blob_path = f"real/{video_dir}/"
-            metadata['real_videos'].append({
-                'video_name': video_dir,
-                'frame_count': len(frames),
-                'blob_path': blob_path
-            })
-    
-    # Process fake videos
-    fake_dir = os.path.join(dataset_dir, 'fake')
-    for video_dir in os.listdir(fake_dir):
-        video_path = os.path.join(fake_dir, video_dir)
-        if os.path.isdir(video_path):
-            frames = [f for f in os.listdir(video_path) if f.endswith('.jpg')]
-            blob_path = f"fake/{video_dir}/"
-            metadata['fake_videos'].append({
-                'video_name': video_dir,
-                'frame_count': len(frames),
-                'blob_path': blob_path
-            })
-    
-    return metadata
+    print(f"Starting frame extraction from: {video_root_dir}")
+    print(f"Outputting images to: {image_output_dir}")
+    print(f"Frame selection method: {frame_choice}")
+
+    processed_count = 0
+    failed_count = 0
+    skipped_count = 0
+    video_extensions = ('.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv') # Add more if needed
+
+    # Walk through the directory structure
+    for root, dirs, files in os.walk(video_root_dir):
+        # Find relative path from the root video dir to the current dir
+        relative_path = os.path.relpath(root, video_root_dir)
+
+        # Construct the corresponding output directory path
+        current_output_dir = os.path.join(image_output_dir, relative_path)
+
+        video_files = [f for f in files if f.lower().endswith(video_extensions)]
+
+        if not video_files:
+            if relative_path != '.': # Don't warn for the root dir itself if empty
+                 # Check if it's just an empty directory or a split directory (like 'train')
+                 is_split_dir = any(os.path.isdir(os.path.join(root, d)) for d in dirs)
+                 if not is_split_dir and not dirs: # Only warn if it seems like a leaf dir with no videos
+                     print(f"Info: No video files found in: {root}")
+            continue # Skip directories without videos
+
+        print(f"Processing directory: {root} -> {current_output_dir}")
+
+        # Use tqdm for a progress bar over the files in the current directory
+        for filename in tqdm(video_files, desc=f"Processing {relative_path}", unit="video"):
+            video_path = os.path.join(root, filename)
+            output_image_filename = os.path.splitext(filename)[0] + '.jpg' # Force jpg output
+            output_image_path_check = os.path.join(current_output_dir, output_image_filename)
+
+            # Optional: Skip if image already exists
+            # if os.path.exists(output_image_path_check):
+            #     # print(f"Skipping {video_path}, output image already exists.")
+            #     skipped_count += 1
+            #     continue
+
+            if extract_frame(video_path, current_output_dir, frame_choice=frame_choice, output_format='jpg'):
+                processed_count += 1
+            else:
+                failed_count += 1
+
+    print("\n--- Extraction Summary ---")
+    print(f"Successfully processed videos: {processed_count}")
+    print(f"Skipped (already exist):    {skipped_count}") # Only relevant if skipping is enabled
+    print(f"Failed extractions:         {failed_count}")
+    print("--------------------------")
+
 
 if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Preprocess video dataset for deepfake detection")
-    parser.add_argument("--input-dir", type=str, required=True, help="Input directory with real and fake videos")
-    parser.add_argument("--output-dir", type=str, required=True, help="Output directory for extracted frames")
-    parser.add_argument("--num-frames", type=int, default=16, help="Number of frames to extract per video")
-    
+    parser = argparse.ArgumentParser(description="Extract a single frame from videos in a dataset structure.")
+    parser.add_argument("video_dir", help="Path to the root directory of the input video dataset.")
+    parser.add_argument("image_dir", help="Path to the root directory for the output image dataset.")
+    parser.add_argument(
+        "-f", "--frame",
+        default="middle",
+        help="Which frame to extract: 'middle', 'first', or an integer frame index (default: middle)."
+    )
+
     args = parser.parse_args()
-    
-    preprocess_video_dataset(args.input_dir, args.output_dir, args.num_frames)
+
+    # Handle integer frame choice
+    frame_choice_arg = args.frame
+    if frame_choice_arg.isdigit():
+        try:
+            frame_choice_arg = int(frame_choice_arg)
+            if frame_choice_arg < 0:
+                 raise ValueError("Frame index cannot be negative.")
+        except ValueError as e:
+            print(f"Error: Invalid frame index '{args.frame}'. Must be 'middle', 'first', or a non-negative integer. {e}")
+            exit(1)
+    elif frame_choice_arg not in ['middle', 'first']:
+        print(f"Error: Invalid frame choice '{args.frame}'. Must be 'middle', 'first', or a non-negative integer.")
+        exit(1)
+
+
+    if not os.path.isdir(args.video_dir):
+        print(f"Error: Input video directory not found: {args.video_dir}")
+        exit(1)
+
+    process_video_dataset(args.video_dir, args.image_dir, frame_choice=frame_choice_arg)

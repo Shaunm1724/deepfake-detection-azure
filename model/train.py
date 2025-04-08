@@ -1,261 +1,212 @@
-import os
-import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, Dataset
-import torchvision.transforms as transforms
-import torchvision.models as models
-from transformers import ViTModel, ViTConfig
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support
-import cv2
-import numpy as np
-from tqdm import tqdm
-import logging
+from torch.optim import lr_scheduler
+import torchvision
+from torchvision import datasets, models, transforms
 import matplotlib.pyplot as plt
-
-
-import sys
+import numpy as np
+import time
 import os
+import copy
 
-sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+# --- Configuration ---
+data_dir = './gemini_images' 
+model_save_path = './deepfake_detector_resnet18.pth'
+num_epochs = 15 
+batch_size = 32 
+learning_rate = 0.001
+use_pretrained = True # Use transfer learning
 
-from data_preprocessing import VideoFrameDataset
+# Check for GPU availability
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# --- Data Loading and Preprocessing ---
 
-# Define the deepfake detection model
-class DeepfakeDetector(nn.Module):
-    def __init__(self, num_classes=2):
-        super(DeepfakeDetector, self).__init__()
-        
-        # CNN Feature Extractor (EfficientNet)
-        self.efficientnet = models.efficientnet_b0(pretrained=True)
-        self.efficientnet.classifier = nn.Identity()  # Remove classifier to get features
-        
-        # Vision Transformer for temporal analysis
-        self.vit_config = ViTConfig(hidden_size=1280, num_hidden_layers=6, num_attention_heads=8)
-        self.transformer = ViTModel(self.vit_config)
-        
-        # Final classification head
-        self.classifier = nn.Sequential(
-            nn.Linear(1280, 512),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(512, num_classes)
-        )
-        
-        # Freeze early layers of EfficientNet
-        for param in list(self.efficientnet.parameters())[:-10]:
-            param.requires_grad = False
-    
-    def forward(self, x_frames):
-        batch_size, seq_len, c, h, w = x_frames.shape
-        
-        # Reshape to process each frame through CNN
-        x_frames = x_frames.view(batch_size * seq_len, c, h, w)
-        
-        # Extract CNN features
-        cnn_features = self.efficientnet(x_frames)  # [batch_size*seq_len, 1280]
-        
-        # Reshape for transformer
-        cnn_features = cnn_features.view(batch_size, seq_len, -1)  # [batch_size, seq_len, 1280]
-        
-        # Pass through transformer
-        transformer_output = self.transformer(inputs_embeds=cnn_features).last_hidden_state
-        
-        # Use the [CLS] equivalent token from first position
-        cls_output = transformer_output[:, 0, :]
-        
-        # Classification
-        logits = self.classifier(cls_output)
-        
-        return logits
-
-def train_model(args):
-    # Set device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logging.info(f"Using device: {device}")
-    
-    # Data transformations
-    transform = transforms.Compose([
-        transforms.ToPILImage(),
-        transforms.Resize((224, 224)),
+# Data augmentation and normalization for training
+# Just normalization for validation/testing
+# Use standard ImageNet means and stds as we use a model pretrained on ImageNet
+data_transforms = {
+    'train': transforms.Compose([
+        transforms.RandomResizedCrop(224),
+        transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-    
-    # Create datasets
-    train_dataset = VideoFrameDataset(
-        root_dir=os.path.join(args.dataset_path, 'train'),
-        num_frames=args.num_frames,
-        transform=transform
-    )
-    
-    val_dataset = VideoFrameDataset(
-        root_dir=os.path.join(args.dataset_path, 'val'),
-        num_frames=args.num_frames,
-        transform=transform
-    )
-    
-    # Create data loaders
-    train_loader = DataLoader(
-        train_dataset, 
-        batch_size=args.batch_size, 
-        shuffle=True, 
-        num_workers=args.num_workers
-    )
-    
-    val_loader = DataLoader(
-        val_dataset, 
-        batch_size=args.batch_size, 
-        shuffle=False, 
-        num_workers=args.num_workers
-    )
-    
-    logging.info(f"Training on {len(train_dataset)} samples, validating on {len(val_dataset)} samples")
-    
-    # Create model
-    model = DeepfakeDetector(num_classes=2)
-    model = model.to(device)
-    
-    # Define loss function and optimizer
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(
-        [p for p in model.parameters() if p.requires_grad], 
-        lr=args.learning_rate,
-        weight_decay=args.weight_decay
-    )
-    
-    # Learning rate scheduler
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, 
-        mode='min', 
-        factor=0.5, 
-        patience=3, 
-        verbose=True
-    )
-    
-    # Training loop
-    best_val_acc = 0.0
-    train_losses = []
-    val_losses = []
-    train_accs = []
-    val_accs = []
-    
-    for epoch in range(args.epochs):
-        logging.info(f"Epoch {epoch+1}/{args.epochs}")
-        
-        # Training phase
-        model.train()
-        train_loss = 0.0
-        train_preds = []
-        train_targets = []
-        
-        for frames, labels in tqdm(train_loader, desc="Training"):
-            frames = frames.to(device)
-            labels = labels.to(device)
-            
-            # Forward pass
-            optimizer.zero_grad()
-            outputs = model(frames)
-            loss = criterion(outputs, labels)
-            
-            # Backward pass and optimize
-            loss.backward()
-            optimizer.step()
-            
-            train_loss += loss.item() * frames.size(0)
-            
-            # Store predictions and targets for metrics
-            _, preds = torch.max(outputs, 1)
-            train_preds.extend(preds.cpu().numpy())
-            train_targets.extend(labels.cpu().numpy())
-        
-        # Calculate training metrics
-        train_loss = train_loss / len(train_loader.dataset)
-        train_acc = accuracy_score(train_targets, train_preds)
-        train_losses.append(train_loss)
-        train_accs.append(train_acc)
-        
-        logging.info(f"Training Loss: {train_loss:.4f}, Accuracy: {train_acc:.4f}")
-        
-        # Validation phase
-        model.eval()
-        val_loss = 0.0
-        val_preds = []
-        val_targets = []
-        
-        with torch.no_grad():
-            for frames, labels in tqdm(val_loader, desc="Validation"):
-                frames = frames.to(device)
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ]),
+    'validation': transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ]),
+    # Add 'test' transform if you have a test set
+    # 'test': transforms.Compose([...])
+}
+
+print("Initializing Datasets and Dataloaders...")
+
+# Create datasets using ImageFolder
+image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x), data_transforms[x])
+                  for x in ['train', 'validation']} 
+
+# Create dataloaders
+dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=batch_size,
+                                             shuffle=True if x == 'train' else False, num_workers=4)
+               for x in ['train', 'validation']} 
+
+dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'validation']}
+class_names = image_datasets['train'].classes
+num_classes = len(class_names)
+
+print(f"Classes: {class_names}")
+print(f"Dataset sizes: {dataset_sizes}")
+if num_classes != 2:
+    print("Warning: Expected 2 classes (real, fake), but found", num_classes)
+
+# --- Model Definition ---
+
+# Load a pre-trained ResNet18 model
+model_ft = models.resnet18(weights=models.ResNet18_Weights.DEFAULT if use_pretrained else None)
+
+# Get the number of input features for the classifier
+num_ftrs = model_ft.fc.in_features
+
+# Replace the final fully connected layer for binary classification
+# Output layer will have 1 neuron (probability of being 'fake' after sigmoid)
+# Or 2 neurons for ('fake', 'real') probabilities with CrossEntropyLoss
+# Using 2 neurons here as it's common with CrossEntropyLoss
+model_ft.fc = nn.Linear(num_ftrs, num_classes)
+
+model_ft = model_ft.to(device)
+
+# --- Loss Function and Optimizer ---
+
+# Use CrossEntropyLoss as we have 2 output neurons
+criterion = nn.CrossEntropyLoss()
+
+# Observe that all parameters are being optimized
+optimizer_ft = optim.Adam(model_ft.parameters(), lr=learning_rate)
+
+# Decay LR by a factor of 0.1 every 7 epochs (optional)
+exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=7, gamma=0.1)
+
+# --- Training Function ---
+
+def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
+    since = time.time()
+
+    best_model_wts = copy.deepcopy(model.state_dict())
+    best_acc = 0.0
+    history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': []}
+
+    for epoch in range(num_epochs):
+        print(f'Epoch {epoch}/{num_epochs - 1}')
+        print('-' * 10)
+
+        # Each epoch has a training and validation phase
+        for phase in ['train', 'validation']:
+            if phase == 'train':
+                model.train()  # Set model to training mode
+            else:
+                model.eval()   # Set model to evaluate mode
+
+            running_loss = 0.0
+            running_corrects = 0
+
+            # Iterate over data.
+            for inputs, labels in dataloaders[phase]:
+                inputs = inputs.to(device)
                 labels = labels.to(device)
-                
-                outputs = model(frames)
-                loss = criterion(outputs, labels)
-                
-                val_loss += loss.item() * frames.size(0)
-                
-                _, preds = torch.max(outputs, 1)
-                val_preds.extend(preds.cpu().numpy())
-                val_targets.extend(labels.cpu().numpy())
-        
-        # Calculate validation metrics
-        val_loss = val_loss / len(val_loader.dataset)
-        val_acc = accuracy_score(val_targets, val_preds)
-        precision, recall, f1, _ = precision_recall_fscore_support(val_targets, val_preds, average='binary')
-        
-        val_losses.append(val_loss)
-        val_accs.append(val_acc)
-        
-        logging.info(f"Validation Loss: {val_loss:.4f}, Accuracy: {val_acc:.4f}")
-        logging.info(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
-        
-        # Update learning rate
-        scheduler.step(val_loss)
-        
-        # Save best model
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            torch.save(model.state_dict(), os.path.join(args.output_dir, 'deepfake_model.pth'))
-            logging.info(f"Saved new best model with validation accuracy: {val_acc:.4f}")
-    
-    # Plot training curves
+
+                # Zero the parameter gradients
+                optimizer.zero_grad()
+
+                # Forward pass
+                # Track history only in train
+                with torch.set_grad_enabled(phase == 'train'):
+                    outputs = model(inputs)
+                    _, preds = torch.max(outputs, 1) # Get the class index with the highest score
+                    loss = criterion(outputs, labels)
+
+                    # Backward + optimize only if in training phase
+                    if phase == 'train':
+                        loss.backward()
+                        optimizer.step()
+
+                # Statistics
+                running_loss += loss.item() * inputs.size(0)
+                running_corrects += torch.sum(preds == labels.data)
+
+            if phase == 'train':
+                scheduler.step() # Step the learning rate scheduler
+
+            epoch_loss = running_loss / dataset_sizes[phase]
+            epoch_acc = running_corrects.double() / dataset_sizes[phase]
+
+            print(f'{phase} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}')
+
+            # Store history
+            if phase == 'train':
+                history['train_loss'].append(epoch_loss)
+                history['train_acc'].append(epoch_acc.item()) # Use .item() to get Python number
+            else:
+                history['val_loss'].append(epoch_loss)
+                history['val_acc'].append(epoch_acc.item()) # Use .item() to get Python number
+
+                # Deep copy the model if it's the best validation accuracy so far
+                if epoch_acc > best_acc:
+                    best_acc = epoch_acc
+                    best_model_wts = copy.deepcopy(model.state_dict())
+                    # Save the best model weights immediately
+                    torch.save(model.state_dict(), model_save_path)
+                    print(f"Best model saved to {model_save_path} with accuracy: {best_acc:.4f}")
+
+
+        print()
+
+    time_elapsed = time.time() - since
+    print(f'Training complete in {time_elapsed // 60:.0f}m {time_elapsed % 60:.0f}s')
+    print(f'Best val Acc: {best_acc:4f}')
+
+    # Load best model weights
+    model.load_state_dict(best_model_wts)
+    return model, history
+
+# --- Start Training ---
+print("Starting Training...")
+model_ft, history = train_model(model_ft, criterion, optimizer_ft, exp_lr_scheduler,
+                                num_epochs=num_epochs)
+
+print("Training Finished!")
+print(f"Model saved to: {model_save_path}")
+
+# --- (Optional) Plot Training History ---
+def plot_history(history):
+    epochs = range(len(history['train_loss']))
     plt.figure(figsize=(12, 5))
-    
+
     plt.subplot(1, 2, 1)
-    plt.plot(train_losses, label='Train Loss')
-    plt.plot(val_losses, label='Validation Loss')
-    plt.xlabel('Epoch')
+    plt.plot(epochs, history['train_loss'], 'b-', label='Training Loss')
+    plt.plot(epochs, history['val_loss'], 'r-', label='Validation Loss')
+    plt.title('Training and Validation Loss')
+    plt.xlabel('Epochs')
     plt.ylabel('Loss')
     plt.legend()
-    
+
     plt.subplot(1, 2, 2)
-    plt.plot(train_accs, label='Train Accuracy')
-    plt.plot(val_accs, label='Validation Accuracy')
-    plt.xlabel('Epoch')
+    # Convert accuracy tensors to floats if they are not already
+    train_acc = [acc for acc in history['train_acc']]
+    val_acc = [acc for acc in history['val_acc']]
+    plt.plot(epochs, train_acc, 'b-', label='Training Accuracy')
+    plt.plot(epochs, val_acc, 'r-', label='Validation Accuracy')
+    plt.title('Training and Validation Accuracy')
+    plt.xlabel('Epochs')
     plt.ylabel('Accuracy')
     plt.legend()
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(args.output_dir, 'training_curves.png'))
-    logging.info(f"Training curves saved to {os.path.join(args.output_dir, 'training_curves.png')}")
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train deepfake detection model")
-    parser.add_argument("--dataset-path", type=str, required=True, help="Path to dataset directory")
-    parser.add_argument("--output-dir", type=str, default="./output", help="Output directory for model and results")
-    parser.add_argument("--batch-size", type=int, default=8, help="Batch size for training")
-    parser.add_argument("--num-frames", type=int, default=16, help="Number of frames to sample from each video")
-    parser.add_argument("--epochs", type=int, default=20, help="Number of epochs to train")
-    parser.add_argument("--learning-rate", type=float, default=0.0001, help="Learning rate")
-    parser.add_argument("--weight-decay", type=float, default=1e-5, help="Weight decay for regularization")
-    parser.add_argument("--num-workers", type=int, default=4, help="Number of worker threads for data loading")
-    
-    args = parser.parse_args()
-    
-    # Create output directory if it doesn't exist
-    os.makedirs(args.output_dir, exist_ok=True)
-    
-    train_model(args)
+    plt.tight_layout()
+    plt.show()
+
+# plot_history(history) # Uncomment to plot graphs after training
+
