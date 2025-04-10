@@ -29,7 +29,7 @@ Here's what the tool looks like:
 **1. The Upload Page**
 *   This is where you start. Just click to choose your video file.
 
-
+![Screenshot of the video upload form](img/index.png)
 
 **2. The Results Page**
 *   After uploading, you'll see this page. It shows:
@@ -37,7 +37,8 @@ Here's what the tool looks like:
     *   The AI's verdict: Real or Fake.
     *   The confidence level for the prediction.
 
-
+![Screenshot showing a prediction result with frame and confidence scores](img/result1.png)
+![Screenshot showing a prediction result with frame and confidence scores](img/result2.png)
 
 ## Why Was This Built? 🤔
 
